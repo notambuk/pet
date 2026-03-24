@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "PET Finance Tracker",
+    "slug": "pet-finance-tracker",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Бид таны аудио бичлэгээр зарлагыг таних болно."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0f172a"
+      },
+      "permissions": [
+        "RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Бид таны аудио бичлэгээр зарлагыг таних болно."
+        }
+      ],
+      "expo-asset",
+      "expo-audio"
+    ]
+  }
+}
