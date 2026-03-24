@@ -1,18 +1,22 @@
 """
 Gamified Finance Tracker — FastAPI Backend
 ==========================================
-POST /api/v1/record-expense/  →  accepts audio, calls Gemini 2.0 Flash,
+POST /api/v1/record-expense/  →  accepts audio, calls Gemini 2.5 Flash,
 saves the transaction, updates the virtual Pet, and returns the result.
+GET  /api/v1/pet-status/       →  returns current Pet HP, mood, status.
+GET  /api/v1/stats/            →  returns income/expense totals for current week & month.
 """
 
 import json
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 
 from models import Pet, SessionLocal, Transaction
 
@@ -26,13 +30,19 @@ if not GEMINI_API_KEY:
 genai.configure(api_key=GEMINI_API_KEY)
 
 # ── Gemini model config ─────────────────────────────────────────────────────
+EXPENSE_CATEGORIES = ['food', 'fitness', 'alcohol', 'transport', 'shopping', 'bills', 'entertainment']
+INCOME_CATEGORIES = ['salary', 'bonus', 'gift', 'investment']
+
 SYSTEM_INSTRUCTION = (
     "You are a financial assistant. Listen to the Mongolian audio and extract "
-    "the transaction details. Return ONLY a valid JSON object with three keys: "
-    "'amount' (integer, extract the number in MNT), 'category' (string: e.g., "
-    "'food', 'fitness', 'alcohol', 'transport', 'shopping'), and 'pet_message' "
-    "(string: a short, sassy or encouraging message in Mongolian from a virtual "
-    "pet based on the purchase)."
+    "the transaction details. The transaction can be either an INCOME or an EXPENSE. "
+    "Return ONLY a valid JSON object with four keys: "
+    "'amount' (integer, the number in MNT), "
+    "'category' (string: one of the following — "
+    f"expenses: {', '.join(EXPENSE_CATEGORIES)}; income: {', '.join(INCOME_CATEGORIES)}), "
+    "'type' (string: either 'income' or 'expense'), and "
+    "'pet_message' (string: a short, sassy or encouraging message in Mongolian "
+    "from a virtual pet based on the transaction)."
 )
 
 gemini_model = genai.GenerativeModel(
@@ -56,13 +66,52 @@ ALLOWED_MIME_TYPES = {
 }
 
 
-# ── Lifespan: seed the default Pet row if missing ───────────────────────────
+# ── Lifespan: seed the default Pet row and sample data if missing ────────────
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db = SessionLocal()
     try:
         if db.query(Pet).first() is None:
             db.add(Pet(status="normal", hp=100, mood=100))
+            db.commit()
+
+        # Seed sample transactions if the table is empty
+        if db.query(Transaction).count() == 0:
+            now = datetime.utcnow()
+            samples = [
+                # This week — income
+                Transaction(amount=2500000, category="salary", type="income",
+                            created_at=now - timedelta(days=1)),
+                Transaction(amount=500000, category="bonus", type="income",
+                            created_at=now - timedelta(days=2)),
+                Transaction(amount=100000, category="gift", type="income",
+                            created_at=now - timedelta(days=3)),
+                # This week — expenses
+                Transaction(amount=15000, category="food", type="expense",
+                            created_at=now - timedelta(days=0)),
+                Transaction(amount=8000, category="transport", type="expense",
+                            created_at=now - timedelta(days=1)),
+                Transaction(amount=45000, category="shopping", type="expense",
+                            created_at=now - timedelta(days=2)),
+                Transaction(amount=30000, category="entertainment", type="expense",
+                            created_at=now - timedelta(days=3)),
+                Transaction(amount=25000, category="alcohol", type="expense",
+                            created_at=now - timedelta(days=4)),
+                Transaction(amount=50000, category="fitness", type="expense",
+                            created_at=now - timedelta(days=5)),
+                # Earlier this month
+                Transaction(amount=1800000, category="salary", type="income",
+                            created_at=now - timedelta(days=14)),
+                Transaction(amount=200000, category="investment", type="income",
+                            created_at=now - timedelta(days=10)),
+                Transaction(amount=120000, category="bills", type="expense",
+                            created_at=now - timedelta(days=12)),
+                Transaction(amount=35000, category="food", type="expense",
+                            created_at=now - timedelta(days=15)),
+                Transaction(amount=60000, category="shopping", type="expense",
+                            created_at=now - timedelta(days=18)),
+            ]
+            db.add_all(samples)
             db.commit()
     finally:
         db.close()
@@ -95,10 +144,10 @@ def get_db():
         db.close()
 
 
-def update_pet(db, category: str) -> Pet:
+def update_pet(db, category: str, txn_type: str) -> Pet:
     """
     Fetch the singleton Pet row and adjust HP / mood / status
-    based on the expense category.
+    based on the transaction type and category.
     """
     pet = db.query(Pet).first()
     if pet is None:
@@ -109,14 +158,19 @@ def update_pet(db, category: str) -> Pet:
 
     category_lower = category.lower().strip()
 
-    if category_lower in ("fitness", "savings"):
-        pet.hp = min(pet.hp + 10, 200)       # cap at 200
-        pet.mood = min(pet.mood + 10, 200)
-        pet.status = "muscular" if category_lower == "fitness" else "happy"
+    if txn_type == "income":
+        pet.hp = min(pet.hp + 10, 200)
+        pet.mood = min(pet.mood + 15, 200)
+        pet.status = "happy"
 
-    elif category_lower in ("alcohol", "junk_food"):
-        pet.hp = max(pet.hp - 10, 0)         # floor at 0
-        pet.status = "dizzy" if category_lower == "alcohol" else "sick"
+    elif category_lower in ("fitness", "investment"):
+        pet.hp = min(pet.hp + 5, 200)
+        pet.mood = min(pet.mood + 5, 200)
+        pet.status = "muscular"
+
+    elif category_lower in ("alcohol", "entertainment"):
+        pet.hp = max(pet.hp - 10, 0)
+        pet.status = "dizzy"
 
     else:
         pet.status = "normal"
@@ -167,7 +221,7 @@ async def record_expense(audio: UploadFile = File(...)):
     try:
         response = gemini_model.generate_content(
             [
-                "Extract the expense details from this audio.",
+                "Extract the transaction details from this audio.",
                 {
                     "mime_type": audio.content_type,
                     "data": audio_bytes,
@@ -186,7 +240,10 @@ async def record_expense(audio: UploadFile = File(...)):
         data = parse_gemini_json(raw_text)
         amount: int = int(data["amount"])
         category: str = str(data["category"])
+        txn_type: str = str(data.get("type", "expense"))
         pet_message: str = str(data["pet_message"])
+        if txn_type not in ("income", "expense"):
+            txn_type = "expense"
     except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
         raise HTTPException(
             status_code=422,
@@ -196,13 +253,13 @@ async def record_expense(audio: UploadFile = File(...)):
     # 5. Persist the transaction ──────────────────────────────────────────────
     db = SessionLocal()
     try:
-        transaction = Transaction(amount=amount, category=category)
+        transaction = Transaction(amount=amount, category=category, type=txn_type)
         db.add(transaction)
         db.commit()
         db.refresh(transaction)
 
         # 6. Update the Pet ───────────────────────────────────────────────────
-        pet = update_pet(db, category)
+        pet = update_pet(db, category, txn_type)
 
         # 7. Extract values before closing the session ────────────────────────
         result = {
@@ -210,6 +267,7 @@ async def record_expense(audio: UploadFile = File(...)):
                 "id": transaction.id,
                 "amount": transaction.amount,
                 "category": transaction.category,
+                "type": transaction.type,
                 "created_at": transaction.created_at.isoformat(),
             },
             "pet_message": pet_message,
@@ -227,3 +285,57 @@ async def record_expense(audio: UploadFile = File(...)):
 
     # 8. Respond ──────────────────────────────────────────────────────────────
     return result
+
+# ── Pet status endpoint ──────────────────────────────────────────────────────
+@app.get("/api/v1/pet-status/")
+async def pet_status():
+    """Return the current Pet HP, mood, and status."""
+    db = SessionLocal()
+    try:
+        pet = db.query(Pet).first()
+        if pet is None:
+            pet = Pet(status="normal", hp=100, mood=100)
+            db.add(pet)
+            db.commit()
+            db.refresh(pet)
+        return {"status": pet.status, "hp": pet.hp, "mood": pet.mood}
+    finally:
+        db.close()
+
+
+# ── Stats endpoint ───────────────────────────────────────────────────────────
+@app.get("/api/v1/stats/")
+async def stats():
+    """
+    Return total income and expenses for the current week and current month.
+    """
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+
+        # Current week: Monday to now
+        week_start = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        # Current month: 1st of this month
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        def _totals(since: datetime) -> dict:
+            income = (
+                db.query(func.coalesce(func.sum(Transaction.amount), 0))
+                .filter(Transaction.type == "income", Transaction.created_at >= since)
+                .scalar()
+            )
+            expenses = (
+                db.query(func.coalesce(func.sum(Transaction.amount), 0))
+                .filter(Transaction.type == "expense", Transaction.created_at >= since)
+                .scalar()
+            )
+            return {"income": income, "expenses": expenses}
+
+        return {
+            "week": _totals(week_start),
+            "month": _totals(month_start),
+        }
+    finally:
+        db.close()

@@ -25,6 +25,7 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     amount = Column(Integer, nullable=False)
     category = Column(String, nullable=False)
+    type = Column(String, nullable=False, default="expense")  # "income" or "expense"
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

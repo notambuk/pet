@@ -9,6 +9,7 @@ import {
   Dimensions,
   ScrollView,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import {
   useAudioRecorder,
@@ -19,10 +20,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import LottieView from "lottie-react-native";
 import * as Haptics from "expo-haptics";
+import { BarChart } from "react-native-chart-kit";
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 // Replace with your machine's local IP (run `ipconfig` → Wi-Fi IPv4 address)
-const API_URL = "http://192.168.68.103:8000/api/v1/record-expense/";
+const API_BASE = "http://192.168.68.103:8000/api/v1";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -46,6 +48,8 @@ const C = {
   textMuted: "#64748B",     // very muted
   bubbleBg: "#1E293B",     // chat bubble bg
   overlay: "rgba(0,0,0,0.7)",
+  income: "#34D399",       // green for income
+  expense: "#EF4444",      // red for expense
 };
 
 // ─── LOTTIE ANIMATION MAP ────────────────────────────────────────────────────
@@ -311,16 +315,267 @@ function ChatBubble({ message }) {
   );
 }
 
+// ─── DASHBOARD SCREEN ────────────────────────────────────────────────────────
+function DashboardScreen() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchStats();
+  }, []);
+
+  async function fetchStats() {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/stats/`);
+      if (!res.ok) throw new Error(`Server ${res.status}`);
+      const data = await res.json();
+      setStats(data);
+    } catch (err) {
+      console.error("Failed to fetch stats:", err);
+      Alert.alert("Алдаа", "Статистик ачаалж чадсангүй.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.dashboardLoading}>
+        <ActivityIndicator size="large" color={C.accent} />
+        <Text style={styles.dashboardLoadingText}>Ачааллаж байна...</Text>
+      </View>
+    );
+  }
+
+  if (!stats) {
+    return (
+      <View style={styles.dashboardLoading}>
+        <Text style={styles.dashboardLoadingText}>Мэдээлэл олдсонгүй</Text>
+        <TouchableOpacity style={styles.retryBtn} onPress={fetchStats}>
+          <Text style={styles.retryBtnText}>Дахин оролдох</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const chartData = {
+    labels: ["Долоо хоног", "Сар"],
+    datasets: [
+      {
+        data: [stats.week.income, stats.month.income],
+        color: () => C.income,
+      },
+      {
+        data: [stats.week.expenses, stats.month.expenses],
+        color: () => C.expense,
+      },
+    ],
+  };
+
+  const chartConfig = {
+    backgroundGradientFrom: C.card,
+    backgroundGradientTo: C.card,
+    decimalPlaces: 0,
+    color: (opacity = 1) => `rgba(139, 92, 246, ${opacity})`,
+    labelColor: () => C.textSecondary,
+    barPercentage: 0.6,
+    propsForBackgroundLines: {
+      strokeDasharray: "",
+      stroke: C.cardBorder,
+    },
+  };
+
+  function formatMNT(val) {
+    if (val >= 1000000) return `${(val / 1000000).toFixed(1)}сая₮`;
+    if (val >= 1000) return `${(val / 1000).toFixed(0)}мянга₮`;
+    return `${val}₮`;
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={styles.dashboardContent}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>📊 Dashboard</Text>
+        <Text style={styles.headerSub}>Орлого & Зарлага</Text>
+      </View>
+
+      {/* ── Weekly Summary Card ────────────────────────────────────────── */}
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryTitle}>📅 Энэ долоо хоног</Text>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Орлого</Text>
+            <Text style={[styles.summaryValue, { color: C.income }]}>
+              {stats.week.income.toLocaleString()}₮
+            </Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Зарлага</Text>
+            <Text style={[styles.summaryValue, { color: C.expense }]}>
+              {stats.week.expenses.toLocaleString()}₮
+            </Text>
+          </View>
+        </View>
+        <View style={styles.summaryNetRow}>
+          <Text style={styles.summaryNetLabel}>Цэвэр:</Text>
+          <Text
+            style={[
+              styles.summaryNetValue,
+              {
+                color:
+                  stats.week.income - stats.week.expenses >= 0
+                    ? C.income
+                    : C.expense,
+              },
+            ]}
+          >
+            {stats.week.income - stats.week.expenses >= 0 ? "+" : ""}
+            {(stats.week.income - stats.week.expenses).toLocaleString()}₮
+          </Text>
+        </View>
+      </View>
+
+      {/* ── Monthly Summary Card ───────────────────────────────────────── */}
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryTitle}>🗓 Энэ сар</Text>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Орлого</Text>
+            <Text style={[styles.summaryValue, { color: C.income }]}>
+              {stats.month.income.toLocaleString()}₮
+            </Text>
+          </View>
+          <View style={styles.summaryDivider} />
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryLabel}>Зарлага</Text>
+            <Text style={[styles.summaryValue, { color: C.expense }]}>
+              {stats.month.expenses.toLocaleString()}₮
+            </Text>
+          </View>
+        </View>
+        <View style={styles.summaryNetRow}>
+          <Text style={styles.summaryNetLabel}>Цэвэр:</Text>
+          <Text
+            style={[
+              styles.summaryNetValue,
+              {
+                color:
+                  stats.month.income - stats.month.expenses >= 0
+                    ? C.income
+                    : C.expense,
+              },
+            ]}
+          >
+            {stats.month.income - stats.month.expenses >= 0 ? "+" : ""}
+            {(stats.month.income - stats.month.expenses).toLocaleString()}₮
+          </Text>
+        </View>
+      </View>
+
+      {/* ── Bar Chart ──────────────────────────────────────────────────── */}
+      <View style={styles.chartCard}>
+        <Text style={styles.chartTitle}>Орлого vs Зарлага</Text>
+        <View style={styles.legendRow}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: C.income }]} />
+            <Text style={styles.legendText}>Орлого</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: C.expense }]} />
+            <Text style={styles.legendText}>Зарлага</Text>
+          </View>
+        </View>
+        <BarChart
+          data={{
+            labels: ["Долоо хоног", "Сар"],
+            datasets: [
+              {
+                data: [stats.week.income, stats.month.income],
+              },
+            ],
+          }}
+          width={SCREEN_W - 72}
+          height={200}
+          yAxisSuffix=""
+          formatYLabel={(v) => formatMNT(Number(v))}
+          chartConfig={{
+            ...chartConfig,
+            color: () => C.income,
+            fillShadowGradientFrom: C.income,
+            fillShadowGradientTo: C.income,
+            fillShadowGradientOpacity: 0.8,
+          }}
+          style={styles.chart}
+          fromZero
+          showBarTops={false}
+        />
+        <BarChart
+          data={{
+            labels: ["Долоо хоног", "Сар"],
+            datasets: [
+              {
+                data: [stats.week.expenses, stats.month.expenses],
+              },
+            ],
+          }}
+          width={SCREEN_W - 72}
+          height={200}
+          yAxisSuffix=""
+          formatYLabel={(v) => formatMNT(Number(v))}
+          chartConfig={{
+            ...chartConfig,
+            color: () => C.expense,
+            fillShadowGradientFrom: C.expense,
+            fillShadowGradientTo: C.expense,
+            fillShadowGradientOpacity: 0.8,
+          }}
+          style={styles.chart}
+          fromZero
+          showBarTops={false}
+        />
+      </View>
+
+      {/* ── Refresh button ─────────────────────────────────────────────── */}
+      <TouchableOpacity style={styles.refreshBtn} onPress={fetchStats}>
+        <Text style={styles.refreshBtnText}>🔄 Шинэчлэх</Text>
+      </TouchableOpacity>
+
+      <View style={{ height: 100 }} />
+    </ScrollView>
+  );
+}
+
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 export default function App() {
   // ── State ────────────────────────────────────────────────────────────────
   const [pet, setPet] = useState({ status: "normal", hp: 100, mood: 100 });
   const [petMessage, setPetMessage] = useState(
-    "Сайн уу! Өнөөдөр юу худалдаж авсан бэ? 🐾"
+    "Сайн уу! Өнөөдөр юу хийсэн бэ? 🐾"
   );
   const [isLoading, setIsLoading] = useState(false);
   const [lastTransaction, setLastTransaction] = useState(null);
+  const [activeTab, setActiveTab] = useState("home");
   const prevHp = useRef(pet.hp);
+
+  // ── Fetch pet status on app load ─────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/pet-status/`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setPet({ status: data.status, hp: data.hp, mood: data.mood });
+        prevHp.current = data.hp;
+      } catch (err) {
+        console.error("Failed to fetch pet status:", err);
+      }
+    })();
+  }, []);
 
   // ── expo-audio recorder ──────────────────────────────────────────────────
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -366,7 +621,6 @@ export default function App() {
         playsInSilentMode: true,
       });
 
-      // Light haptic when recording starts
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       await recorder.prepareToRecordAsync();
@@ -379,7 +633,6 @@ export default function App() {
 
   // ── Stop recording, upload, and trigger haptic on result ─────────────────
   const stopRecordingAndUpload = useCallback(async () => {
-    // Light haptic when recording stops
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsLoading(true);
 
@@ -400,7 +653,7 @@ export default function App() {
         name: "audio.m4a",
       });
 
-      const response = await fetch(API_URL, {
+      const response = await fetch(`${API_BASE}/record-expense/`, {
         method: "POST",
         body: formData,
       });
@@ -412,7 +665,6 @@ export default function App() {
 
       const data = await response.json();
 
-      // Determine if HP went up or down for haptic feedback
       const newHp = data.pet.hp;
       const oldHp = prevHp.current;
 
@@ -425,14 +677,11 @@ export default function App() {
       setLastTransaction(data.transaction);
       prevHp.current = newHp;
 
-      // Haptic feedback based on HP change
       if (newHp > oldHp) {
-        // HP went up → success notification
         await Haptics.notificationAsync(
           Haptics.NotificationFeedbackType.Success
         );
       } else if (newHp < oldHp) {
-        // HP went down → heavy/error vibration
         await Haptics.notificationAsync(
           Haptics.NotificationFeedbackType.Error
         );
@@ -463,17 +712,19 @@ export default function App() {
   // ── Derived values ──────────────────────────────────────────────────────
   const lottieSource = getLottieForStatus(pet.status);
 
-  // Category label map (for nicer display)
+  // Category label map
   const categoryLabels = {
     food: "🍔 Хоол",
     transport: "🚌 Тээвэр",
     entertainment: "🎮 Зугаа",
     shopping: "🛍 Дэлгүүр",
     fitness: "🏋️ Фитнесс",
-    savings: "💰 Хуримтлал",
+    bills: "🧾 Төлбөр",
     alcohol: "🍺 Архи",
-    junk_food: "🍟 Хог хоол",
-    general: "📦 Ерөнхий",
+    salary: "💰 Цалин",
+    bonus: "🎁 Урамшуулал",
+    gift: "🎀 Бэлэг",
+    investment: "📈 Хөрөнгө оруулалт",
   };
 
   // ── Render ──────────────────────────────────────────────────────────────
@@ -482,95 +733,169 @@ export default function App() {
       <StatusBar style="light" />
       <LoadingOverlay visible={isLoading} />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Header ───────────────────────────────────────────────────── */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>🐾 PET</Text>
-          <Text style={styles.headerSub}>Finance Tracker</Text>
-        </View>
-
-        {/* ── Stats Card (HP + Mood) ───────────────────────────────────── */}
-        <View style={styles.statsCard}>
-          <ProgressBar label="HP" icon="❤️" value={pet.hp} />
-          <View style={{ height: 12 }} />
-          <ProgressBar label="Mood" icon="😊" value={pet.mood} />
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusBadgeText}>
-              {pet.status.toUpperCase()}
-            </Text>
-          </View>
-        </View>
-
-        {/* ── Chat Bubble (above pet) ──────────────────────────────────── */}
-        <ChatBubble message={petMessage} />
-
-        {/* ── Pet Lottie Animation ─────────────────────────────────────── */}
-        <View style={styles.petSection}>
-          <LottieView
-            ref={lottieRef}
-            source={{ uri: lottieSource }}
-            autoPlay
-            loop
-            style={styles.petLottie}
-          />
-        </View>
-
-        {/* ── Last Transaction Card ────────────────────────────────────── */}
-        {lastTransaction && (
-          <View style={styles.transactionCard}>
-            <View style={styles.transactionHeader}>
-              <Text style={styles.transactionLabel}>СҮҮЛИЙН ГҮЙЛГЭЭ</Text>
-              <Text style={styles.transactionId}>
-                #{lastTransaction.id}
-              </Text>
+      {activeTab === "home" ? (
+        <>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* ── Header ───────────────────────────────────────────────── */}
+            <View style={styles.header}>
+              <Text style={styles.headerTitle}>🐾 PET</Text>
+              <Text style={styles.headerSub}>Finance Tracker</Text>
             </View>
-            <View style={styles.transactionBody}>
-              <Text style={styles.transactionAmount}>
-                {lastTransaction.amount.toLocaleString()}₮
-              </Text>
-              <View style={styles.transactionCatBadge}>
-                <Text style={styles.transactionCatText}>
-                  {categoryLabels[lastTransaction.category] ||
-                    lastTransaction.category}
+
+            {/* ── Stats Card (HP + Mood) ───────────────────────────────── */}
+            <View style={styles.statsCard}>
+              <ProgressBar label="HP" icon="❤️" value={pet.hp} />
+              <View style={{ height: 12 }} />
+              <ProgressBar label="Mood" icon="😊" value={pet.mood} />
+              <View style={styles.statusBadge}>
+                <Text style={styles.statusBadgeText}>
+                  {pet.status.toUpperCase()}
                 </Text>
               </View>
             </View>
+
+            {/* ── Chat Bubble (above pet) ──────────────────────────────── */}
+            <ChatBubble message={petMessage} />
+
+            {/* ── Pet Lottie Animation ─────────────────────────────────── */}
+            <View style={styles.petSection}>
+              <LottieView
+                ref={lottieRef}
+                source={{ uri: lottieSource }}
+                autoPlay
+                loop
+                style={styles.petLottie}
+              />
+            </View>
+
+            {/* ── Last Transaction Card ────────────────────────────────── */}
+            {lastTransaction && (
+              <View style={styles.transactionCard}>
+                <View style={styles.transactionHeader}>
+                  <Text style={styles.transactionLabel}>СҮҮЛИЙН ГҮЙЛГЭЭ</Text>
+                  <View
+                    style={[
+                      styles.typeBadge,
+                      {
+                        backgroundColor:
+                          lastTransaction.type === "income"
+                            ? C.income + "20"
+                            : C.expense + "20",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.typeBadgeText,
+                        {
+                          color:
+                            lastTransaction.type === "income"
+                              ? C.income
+                              : C.expense,
+                        },
+                      ]}
+                    >
+                      {lastTransaction.type === "income"
+                        ? "↑ ОРЛОГО"
+                        : "↓ ЗАРЛАГА"}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.transactionBody}>
+                  <Text
+                    style={[
+                      styles.transactionAmount,
+                      {
+                        color:
+                          lastTransaction.type === "income"
+                            ? C.income
+                            : C.textPrimary,
+                      },
+                    ]}
+                  >
+                    {lastTransaction.type === "income" ? "+" : "-"}
+                    {lastTransaction.amount.toLocaleString()}₮
+                  </Text>
+                  <View style={styles.transactionCatBadge}>
+                    <Text style={styles.transactionCatText}>
+                      {categoryLabels[lastTransaction.category] ||
+                        lastTransaction.category}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+
+          {/* ── Bottom: Record Button + Wave Rings ─────────────────────── */}
+          <View style={styles.bottomBar}>
+            <View style={styles.recordArea}>
+              <WaveRings active={recorder.isRecording} />
+              <TouchableOpacity
+                onPress={handleRecordPress}
+                activeOpacity={0.8}
+                disabled={isLoading}
+              >
+                <Animated.View
+                  style={[
+                    styles.recordBtn,
+                    recorder.isRecording && styles.recordBtnActive,
+                    { transform: [{ scale: pulseAnim }] },
+                  ]}
+                >
+                  <Text style={styles.recordBtnIcon}>
+                    {recorder.isRecording ? "⏹" : "🎙"}
+                  </Text>
+                </Animated.View>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.recordLabel}>
+              {recorder.isRecording
+                ? "Сонсож байна... Зогсоохын тулд дарна уу"
+                : "Орлого эсвэл зарлагаа бичихийн тулд дарна уу"}
+            </Text>
           </View>
-        )}
-      </ScrollView>
+        </>
+      ) : (
+        <DashboardScreen />
+      )}
 
-      {/* ── Bottom: Record Button + Wave Rings ─────────────────────────── */}
-      <View style={styles.bottomBar}>
-        <View style={styles.recordArea}>
-          {/* Expanding wave rings while recording */}
-          <WaveRings active={recorder.isRecording} />
-
-          <TouchableOpacity
-            onPress={handleRecordPress}
-            activeOpacity={0.8}
-            disabled={isLoading}
+      {/* ── Bottom Tab Bar ────────────────────────────────────────────── */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity
+          style={[styles.tabItem, activeTab === "home" && styles.tabItemActive]}
+          onPress={() => setActiveTab("home")}
+        >
+          <Text style={styles.tabIcon}>🐾</Text>
+          <Text
+            style={[
+              styles.tabLabel,
+              activeTab === "home" && styles.tabLabelActive,
+            ]}
           >
-            <Animated.View
-              style={[
-                styles.recordBtn,
-                recorder.isRecording && styles.recordBtnActive,
-                { transform: [{ scale: pulseAnim }] },
-              ]}
-            >
-              <Text style={styles.recordBtnIcon}>
-                {recorder.isRecording ? "⏹" : "🎙"}
-              </Text>
-            </Animated.View>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.recordLabel}>
-          {recorder.isRecording
-            ? "Сонсож байна... Зогсоохын тулд дарна уу"
-            : "Зарлага бичихийн тулд дарна уу"}
-        </Text>
+            Нүүр
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.tabItem,
+            activeTab === "dashboard" && styles.tabItemActive,
+          ]}
+          onPress={() => setActiveTab("dashboard")}
+        >
+          <Text style={styles.tabIcon}>📊</Text>
+          <Text
+            style={[
+              styles.tabLabel,
+              activeTab === "dashboard" && styles.tabLabelActive,
+            ]}
+          >
+            Тайлан
+          </Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -760,13 +1085,13 @@ const styles = StyleSheet.create({
   // ── Bottom Bar + Record Button ──────────────────────────────────────────
   bottomBar: {
     position: "absolute",
-    bottom: 0,
+    bottom: 60,
     left: 0,
     right: 0,
     alignItems: "center",
-    paddingBottom: 40,
+    paddingBottom: 16,
     paddingTop: 16,
-    backgroundColor: C.bg + "EE", // semi-transparent
+    backgroundColor: C.bg + "EE",
   },
   recordArea: {
     width: 90,
@@ -868,5 +1193,198 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "500",
     marginTop: 4,
+  },
+
+  // ── Transaction Type Badge ──────────────────────────────────────────────
+  typeBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  typeBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+  },
+
+  // ── Tab Bar ─────────────────────────────────────────────────────────────
+  tabBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    backgroundColor: C.card,
+    borderTopWidth: 1,
+    borderTopColor: C.cardBorder,
+    paddingBottom: 8,
+    paddingTop: 8,
+  },
+  tabItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 6,
+  },
+  tabItemActive: {
+    borderTopWidth: 2,
+    borderTopColor: C.accent,
+  },
+  tabIcon: {
+    fontSize: 20,
+    marginBottom: 2,
+  },
+  tabLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: C.textMuted,
+  },
+  tabLabelActive: {
+    color: C.accent,
+  },
+
+  // ── Dashboard ───────────────────────────────────────────────────────────
+  dashboardContent: {
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    paddingBottom: 80,
+  },
+  dashboardLoading: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.bg,
+  },
+  dashboardLoadingText: {
+    color: C.textSecondary,
+    marginTop: 12,
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  retryBtn: {
+    marginTop: 16,
+    backgroundColor: C.accent,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  retryBtnText: {
+    color: C.textPrimary,
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
+  // ── Summary Cards ───────────────────────────────────────────────────────
+  summaryCard: {
+    backgroundColor: C.card,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.cardBorder,
+  },
+  summaryTitle: {
+    color: C.textPrimary,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 16,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  summaryDivider: {
+    width: 1,
+    height: 36,
+    backgroundColor: C.cardBorder,
+  },
+  summaryLabel: {
+    color: C.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  summaryNetRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: C.cardBorder,
+  },
+  summaryNetLabel: {
+    color: C.textMuted,
+    fontSize: 13,
+    fontWeight: "600",
+    marginRight: 8,
+  },
+  summaryNetValue: {
+    fontSize: 18,
+    fontWeight: "900",
+  },
+
+  // ── Chart Card ──────────────────────────────────────────────────────────
+  chartCard: {
+    backgroundColor: C.card,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: C.cardBorder,
+  },
+  chartTitle: {
+    color: C.textPrimary,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 8,
+  },
+  legendRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginBottom: 16,
+    gap: 20,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+  },
+  legendText: {
+    color: C.textSecondary,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  chart: {
+    borderRadius: 12,
+    marginVertical: 4,
+  },
+  refreshBtn: {
+    alignSelf: "center",
+    backgroundColor: C.accent + "20",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.accent + "40",
+  },
+  refreshBtnText: {
+    color: C.accentGlow,
+    fontSize: 14,
+    fontWeight: "700",
   },
 });
